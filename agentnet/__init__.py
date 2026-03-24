@@ -18,8 +18,11 @@ from .errors import (
     TimeoutError,
 )
 from .resources.tasks import TasksResource, AsyncTasksResource
+from .resources.deliverables import DeliverablesResource, AsyncDeliverablesResource
+from .resources.webhooks import WebhooksResource, AsyncWebhooksResource
+from .resources.billing import BillingResource, AsyncBillingResource
 
-__version__ = "0.1.6"
+__version__ = "0.2.0"
 __all__ = [
     "__version__",
     "AgentNetClient",
@@ -56,6 +59,9 @@ class AgentNetClient:
             raise ValueError("api_key is required")
         self._http = SyncHttpClient(base_url, api_key, timeout)
         self.tasks = TasksResource(self._http)
+        self.deliverables = DeliverablesResource(self._http)
+        self.webhooks = WebhooksResource(self._http)
+        self.billing = BillingResource(self._http)
 
     def quote(self, skill: str, region: str | None = None, priority: str = "standard") -> dict[str, Any]:
         """Get a price quote and worker availability."""
@@ -68,10 +74,6 @@ class AgentNetClient:
         """List available skills."""
         result = self._http.get("/registry/skills")
         return result if isinstance(result, list) else result.get("items", [])
-
-    def balance(self) -> dict[str, Any]:
-        """Get account balance."""
-        return self._http.get("/account/credits")
 
 
 class AsyncAgentNetClient:
@@ -91,6 +93,9 @@ class AsyncAgentNetClient:
             raise ValueError("api_key is required")
         self._http = AsyncHttpClient(base_url, api_key, timeout)
         self.tasks = AsyncTasksResource(self._http)
+        self.deliverables = AsyncDeliverablesResource(self._http)
+        self.webhooks = AsyncWebhooksResource(self._http)
+        self.billing = AsyncBillingResource(self._http)
 
     async def quote(self, skill: str, region: str | None = None, priority: str = "standard") -> dict[str, Any]:
         body: dict[str, Any] = {"skillId": skill, "slaTier": priority}

@@ -14,15 +14,40 @@ class TasksResource:
     def __init__(self, http):
         self._http = http
 
-    def submit(self, *, skill: str, input: str, description: str = "", priority: str = "standard",
-               region: str | None = None, min_trust_score: int | None = None) -> dict[str, Any]:
-        """Submit a task for execution."""
-        body = {"skillId": skill, "inputEncrypted": input, "description": description, "slaTier": priority}
+    def submit(self, *, skill: str, input: str = "", description: str = "", priority: str = "standard",
+               region: str | None = None, min_trust_score: int | None = None,
+               repo_url: str | None = None, idempotency_key: str | None = None,
+               max_cost_usd: float | None = None) -> dict[str, Any]:
+        """Submit a task. Supports code input, repo URLs, idempotency, and budget limits."""
+        import random, time
+
+        # Budget limit check
+        if max_cost_usd is not None:
+            try:
+                quote = self._http.post("/tasks/quote", body={"skillId": skill, "slaTier": priority, "region": region})
+                if quote.get("maxChargeUsdc", 0) > max_cost_usd:
+                    raise ValueError(f"Task would cost up to ${quote['maxChargeUsdc']:.4f} exceeding budget ${max_cost_usd:.4f}")
+            except ValueError:
+                raise
+            except Exception:
+                pass  # Quote failed, proceed without budget check
+
+        # Repo URL support
+        input_payload = input
+        if repo_url:
+            import json
+            input_payload = json.dumps({"repoUrl": repo_url, "description": description or f"Process repo: {repo_url}"})
+
+        # Auto-generate idempotency key
+        idem = idempotency_key or f"sdk_{int(time.time())}_{random.randint(0, 99999999)}"
+
+        body: dict[str, Any] = {"skillId": skill, "inputEncrypted": input_payload, "description": description,
+                                "slaTier": priority, "idempotencyKey": idem}
         if region:
             body["region"] = region
         if min_trust_score is not None:
             body["minTrustScore"] = min_trust_score
-        return self._http.post("/tasks", body=body)
+        return self._retry_on_rate_limit(lambda: self._http.post("/tasks", body=body))
 
     def get(self, task_id: str) -> dict[str, Any]:
         """Get task details."""
@@ -31,6 +56,23 @@ class TasksResource:
     def status(self, task_id: str) -> dict[str, Any]:
         """Get task status with customer events."""
         return self._http.get(f"/tasks/{task_id}/status")
+
+    def list(self, status: str | None = None, skill: str | None = None,
+             since: str | None = None, until: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        """List tasks with optional filtering."""
+        query: dict[str, Any] = {"limit": limit}
+        if status:
+            query["status"] = status
+        if skill:
+            query["skill"] = skill
+        if since:
+            query["since"] = since
+        if until:
+            query["until"] = until
+        result = self._http.get("/tasks", query=query)
+        if isinstance(result, list):
+            return result
+        return result.get("items", [])
 
     def cancel(self, task_id: str) -> None:
         """Cancel a task."""
@@ -43,6 +85,23 @@ class TasksResource:
     def acknowledge(self, task_id: str) -> None:
         """Acknowledge an action_required event."""
         self._http.post(f"/tasks/{task_id}/acknowledge")
+
+    def dispute(self, task_id: str, reason: str) -> None:
+        """Dispute a task result."""
+        self._http.post(f"/tasks/{task_id}/dispute", body={"reason": reason})
+
+    def _retry_on_rate_limit(self, fn, max_retries: int = 3):
+        """Auto-retry on rate limit with exponential backoff."""
+        from ..errors import RateLimitError
+        for attempt in range(max_retries + 1):
+            try:
+                return fn()
+            except RateLimitError as e:
+                if attempt < max_retries:
+                    delay = (e.retry_after or (2 ** attempt))
+                    time.sleep(delay)
+                    continue
+                raise
 
     def wait(self, task_id: str, timeout: int = 300, poll_interval: int = 3) -> dict[str, Any]:
         """Wait for task completion by polling."""
