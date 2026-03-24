@@ -22,7 +22,7 @@ from .resources.deliverables import DeliverablesResource, AsyncDeliverablesResou
 from .resources.webhooks import WebhooksResource, AsyncWebhooksResource
 from .resources.billing import BillingResource, AsyncBillingResource
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 __all__ = [
     "__version__",
     "AgentNetClient",
